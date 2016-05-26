@@ -290,6 +290,20 @@ typedef int perl_key;
 #   define PL_thr_key *dll_PL_thr_key
 #  endif
 # endif
+# define Perl_hv_iternext_flags dll_Perl_hv_iternext_flags
+# define Perl_hv_iterinit dll_Perl_hv_iterinit
+# define Perl_hv_iterkey dll_Perl_hv_iterkey
+# define Perl_hv_iterval dll_Perl_hv_iterval
+# define Perl_av_fetch dll_Perl_av_fetch
+# define Perl_av_len dll_Perl_av_len
+# define Perl_sv_2nv_flags dll_Perl_sv_2nv_flags
+# if defined(PERLIO_LAYERS) && !defined(USE_SFIO)
+#  define PerlIOBase_pushed dll_PerlIOBase_pushed
+#  define PerlIO_define_layer dll_PerlIO_define_layer
+# endif
+# if (PERL_REVISION == 5) && (PERL_VERSION >= 24)
+#  define Perl_savetmps dll_Perl_savetmps
+# endif
 
 /*
  * Declare HANDLE for perl.dll and function pointers.
@@ -433,6 +447,20 @@ static SV* (*Perl_Isv_yes_ptr)(register PerlInterpreter*);
 static perl_key* (*Perl_Gthr_key_ptr)_((pTHX));
 #endif
 static void (*boot_DynaLoader)_((pTHX_ CV*));
+static HE * (*Perl_hv_iternext_flags)(pTHX_ HV *, I32);
+static I32 (*Perl_hv_iterinit)(pTHX_ HV *);
+static char * (*Perl_hv_iterkey)(pTHX_ HE *, I32 *);
+static SV * (*Perl_hv_iterval)(pTHX_ HV *, HE *);
+static SV** (*Perl_av_fetch)(pTHX_ AV *, SSize_t, I32);
+static SSize_t (*Perl_av_len)(pTHX_ AV *);
+static NV (*Perl_sv_2nv_flags)(pTHX_ SV *const, const I32);
+#if defined(PERLIO_LAYERS) && !defined(USE_SFIO)
+static IV (*PerlIOBase_pushed)(pTHX_ PerlIO *, const char *, SV *, PerlIO_funcs *);
+static void (*PerlIO_define_layer)(pTHX_ PerlIO_funcs *);
+#endif
+#if (PERL_REVISION == 5) && (PERL_VERSION >= 24)
+static void (*Perl_savetmps)(pTHX);
+#endif
 
 /*
  * Table of name to function pointer of perl.
@@ -565,15 +593,38 @@ static struct {
     {"Perl_Gthr_key_ptr", (PERL_PROC*)&Perl_Gthr_key_ptr},
 #endif
     {"boot_DynaLoader", (PERL_PROC*)&boot_DynaLoader},
+    {"Perl_hv_iternext_flags", (PERL_PROC*)&Perl_hv_iternext_flags},
+    {"Perl_hv_iterinit", (PERL_PROC*)&Perl_hv_iterinit},
+    {"Perl_hv_iterkey", (PERL_PROC*)&Perl_hv_iterkey},
+    {"Perl_hv_iterval", (PERL_PROC*)&Perl_hv_iterval},
+    {"Perl_av_fetch", (PERL_PROC*)&Perl_av_fetch},
+    {"Perl_av_len", (PERL_PROC*)&Perl_av_len},
+    {"Perl_sv_2nv_flags", (PERL_PROC*)&Perl_sv_2nv_flags},
+#if defined(PERLIO_LAYERS) && !defined(USE_SFIO)
+    {"PerlIOBase_pushed", (PERL_PROC*)&PerlIOBase_pushed},
+    {"PerlIO_define_layer", (PERL_PROC*)&PerlIO_define_layer},
+#endif
+#if (PERL_REVISION == 5) && (PERL_VERSION >= 24)
+    {"Perl_savetmps", (PERL_PROC*)&Perl_savetmps},
+#endif
     {"", NULL},
 };
 
 /* Work around for perl-5.18.
- * The definitions of S_SvREFCNT_inc and S_SvREFCNT_dec are needed, so include
- * "perl\lib\CORE\inline.h", after Perl_sv_free2 is defined.
- * The linker won't complain about undefined __impl_Perl_sv_free2. */
+ * For now, only the definitions of S_SvREFCNT_dec are needed in
+ * "perl\lib\CORE\inline.h". */
 #if (PERL_REVISION == 5) && (PERL_VERSION >= 18)
-# include <inline.h>
+static void
+S_SvREFCNT_dec(pTHX_ SV *sv)
+{
+    if (LIKELY(sv != NULL)) {
+	U32 rc = SvREFCNT(sv);
+	if (LIKELY(rc > 1))
+	    SvREFCNT(sv) = rc - 1;
+	else
+	    Perl_sv_free2(aTHX_ sv, rc);
+    }
+}
 #endif
 
 /*
@@ -744,7 +795,7 @@ newWINrv(rv, ptr)
 	sv_setiv(ptr->w_perl_private, PTR2IV(ptr));
     }
     else
-	SvREFCNT_inc(ptr->w_perl_private);
+	SvREFCNT_inc_void_NN(ptr->w_perl_private);
     SvRV(rv) = ptr->w_perl_private;
     SvROK_on(rv);
     return sv_bless(rv, gv_stashpv("VIWIN", TRUE));
@@ -762,7 +813,7 @@ newBUFrv(rv, ptr)
 	sv_setiv(ptr->b_perl_private, PTR2IV(ptr));
     }
     else
-	SvREFCNT_inc(ptr->b_perl_private);
+	SvREFCNT_inc_void_NN(ptr->b_perl_private);
     SvRV(rv) = ptr->b_perl_private;
     SvROK_on(rv);
     return sv_bless(rv, gv_stashpv("VIBUF", TRUE));
